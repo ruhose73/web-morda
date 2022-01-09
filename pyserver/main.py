@@ -72,7 +72,7 @@ def border():
         FROM osm_boundaries
         WHERE name ~ %s
     )
-    SELECT json_build_object( -- формируем json объект, заданной структуры
+    SELECT json_build_object(
               'type',   'Feature',
               'geometry', st_asgeojson(st_transform(geometry, 4326))::json,
               'properties', json_build_object(
