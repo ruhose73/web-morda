@@ -20,11 +20,13 @@ app.config.from_object(__name__)
 db = Database(app)
 
 
-@app.route("/api/border/")
+@app.route("/api/regionborder/")
 def border():
     from flask import request
     # считываем значение зума из параметра
     zoom = int(request.args['zoom'])
+    # считываем название города
+    region = str(request.args['regionName'])
 
     # формируем полигон
     bounds = [float(i) for i in request.args['bounds'].split(',')]
@@ -60,28 +62,25 @@ def border():
 
     # наш запрос
     q = db.Model.raw("""
-SELECT
-  st_asgeojson(
-      st_transform(
-        st_simplifypreservetopology(
-          st_intersection( -- рассчитываем пересечение
-            geometry,
-            st_transform(
-              st_geomfromtext(
-                %s,
-                4326 -- getBounds возвращает геометрию границы в WGS84
-              ),
-              3857 -- конвертируем в меркатора, чтоб проекции совпадали
-            ) -- геометрия границы
-          ),
-          %s
-        ),
-        4326
-      )
-  )::json AS geometry
-FROM osm_boundaries
-WHERE name ~ 'Иркутская'
-""", bounds_polygon, tolerance)
+    WITH regions AS (
+        SELECT
+            st_simplifypreservetopology(
+              st_intersection(geometry, st_transform(st_geomfromtext(%s, 4326), 3857)),
+              %s
+            ) AS geometry,
+            name as region_name
+        FROM osm_boundaries
+        WHERE name ~ %s
+    )
+    SELECT json_build_object( -- формируем json объект, заданной структуры
+              'type',   'Feature',
+              'geometry', st_asgeojson(st_transform(geometry, 4326))::json,
+              'properties', json_build_object(
+                'name', region_name
+              )
+           ) as geometry
+    FROM regions
+    """, bounds_polygon, tolerance, region)
 
     # если регионов несколько, то собираем их в список
     geometries = []
