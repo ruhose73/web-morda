@@ -1,0 +1,97 @@
+import json
+
+from flask import Flask, jsonify
+from flask_peewee.db import Database
+
+# настройки подключения
+DATABASE = {
+    'name': 'osm_data_russia',  # укажите свою БД
+    'engine': 'peewee.PostgresqlDatabase',
+    'user': 'postgres',  # тут юзера своего
+    'password': '123456789',  # а тут пароль для подключения к БД
+    'host': 'localhost',
+}
+DEBUG = True
+SECRET_KEY = 'ssshhhh'
+
+# создаем приложение, и подключаем к нему peewee БД
+app = Flask(__name__)
+app.config.from_object(__name__)
+db = Database(app)
+
+
+@app.route("/api/border/")
+def border():
+    from flask import request
+    # считываем значение зума из параметра
+    zoom = int(request.args['zoom'])
+
+    # формируем полигон
+    bounds = [float(i) for i in request.args['bounds'].split(',')]
+    bounds_polygon = "POLYGON((" \
+                     "{west} {north}," \
+                     "{east} {north}," \
+                     "{east} {south}," \
+                     "{west} {south}," \
+                     "{west} {north}" \
+                     "))".format(
+        west=max(-180, bounds[0]),
+        south=bounds[1],
+        east=min(180, bounds[2]),
+        north=bounds[3],
+    )
+
+    # подобранные на глаз, значения сглаживания
+    tolerance = {
+        1: 60000,
+        2: 50000,
+        3: 25000,
+        4: 12000,
+        5: 6000,
+        6: 4000,
+        7: 1500,
+        8: 1000,
+        9: 350,
+        10: 180,
+        11: 80,
+        12: 50,
+        13: 40,
+    }.get(zoom, 0)
+
+    # наш запрос
+    q = db.Model.raw("""
+SELECT
+  st_asgeojson(
+      st_transform(
+        st_simplifypreservetopology(
+          st_intersection( -- рассчитываем пересечение
+            geometry,
+            st_transform(
+              st_geomfromtext(
+                %s,
+                4326 -- getBounds возвращает геометрию границы в WGS84
+              ),
+              3857 -- конвертируем в меркатора, чтоб проекции совпадали
+            ) -- геометрия границы
+          ),
+          %s
+        ),
+        4326
+      )
+  )::json AS geometry
+FROM osm_boundaries
+WHERE name ~ 'Иркутская'
+""", bounds_polygon, tolerance)
+
+    # если регионов несколько, то собираем их в список
+    geometries = []
+    for row in q:
+        geometries.append(row.geometry)
+
+    # возвращаем запрос
+    return jsonify({
+        'geometries': geometries
+    })
+
+if __name__ == '__main__':
+    app.run()
